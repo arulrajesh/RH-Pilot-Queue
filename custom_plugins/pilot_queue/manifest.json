@@ -3,7 +3,7 @@
     "domain": "pilot_queue",
     "author": "Arul",
     "description": "ZippyQ-style pilot self-service queue system. Pilots queue themselves at a kiosk, heats are auto-generated in RotorHazard.",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "required_rhapi_version": "1.2",
     "license": "MIT",
     "license_uri": "https://opensource.org/licenses/MIT",
