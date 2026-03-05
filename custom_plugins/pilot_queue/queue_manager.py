@@ -39,17 +39,18 @@ class QueueManager:
     def load(self, rhapi):
         """Load config from RHAPI persistent config and state from data directory."""
         self._rhapi = rhapi
+        rhapi.config.register_section(CONFIG_SECTION)
 
         # Load config from RHAPI persistent configuration
         for key, default in DEFAULT_CONFIG.items():
             val = rhapi.config.get(CONFIG_SECTION, key)
-            if val is not None:
+            if val is not None and val != '':
                 if isinstance(default, bool):
                     self.config[key] = val in (True, 1, '1', 'true', 'True')
-                elif isinstance(default, int):
+                elif default is not None and isinstance(default, int):
                     self.config[key] = int(val)
                 else:
-                    self.config[key] = val
+                    self.config[key] = int(val) if str(val).isdigit() else val
             else:
                 self.config[key] = default
 
