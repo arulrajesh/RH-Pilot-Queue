@@ -20,22 +20,46 @@ Pilots queue themselves at a shared kiosk (tablet/phone), and heats are automati
 1. Copy the `custom_plugins/pilot_queue` folder into your RotorHazard `custom_plugins` directory
 2. Restart RotorHazard
 
-## Usage
+## User Guide
 
-### Kiosk Page
-Navigate to `http://<your-rh-server>/pilot_queue/` on a tablet or phone placed at the race venue.
+### 1. Configure the Admin Page
 
-Pilots tap **Add Pilot** on their preferred slot, search for their name, and tap to join the queue.
+Navigate to `http://<your-rh-server>/q/admin` and configure the following settings:
 
-### Admin Page
-Navigate to `http://<your-rh-server>/pilot_queue/admin` to configure the queue and manage pilots.
+1. **Race Class** - Select the class that heats will be generated in
+2. **Number of Slots** - Frequency slots per heat, match your node count (e.g. `4`)
+3. **Max Packs per Pilot** - Total races a pilot can fly in a session (e.g. `10`)
+4. **Max Queue Entries** - Times a pilot can be in the queue simultaneously (e.g. `5`)
+5. **Rest Rounds** - Heats to skip between a pilot's races, set to `0` for no rest
+6. **Auto-Generate Heats** - Check this to automatically create heats when all slots are filled
+7. Click **Save Settings**
 
-**Settings:**
-- **Number of slots** - How many frequency slots per heat (default: 4)
-- **Max packs** - Maximum packs a pilot can fly in a session (default: 10)
-- **Rest rounds** - Minimum heats between consecutive races for a pilot (default: 0)
-- **Race class** - Which RotorHazard class to assign generated heats to
-- **Auto-generate** - Automatically create heats when all slots are filled
+### 2. Sync Existing Heats (if applicable)
+
+If there are already heats in the selected class (from a previous session or manual setup):
+
+1. Scroll down to the **Queue Overview** section on the admin page
+2. Click **Reset Queue**
+3. The plugin will scan the class and pick up any existing heats — both completed and upcoming heats will appear on the kiosk
+
+### 3. Open the Kiosk
+
+Navigate to `http://<your-rh-server>/q/` on a tablet or phone placed at the race venue.
+
+- Pilots tap **Add Pilot** on their preferred slot, search for their name, and tap to join the queue
+- When all slots in a row are filled, a heat is automatically generated in RotorHazard (if auto-generate is enabled)
+- The kiosk shows three sections:
+  - **Running / Up Next** - Heats that are currently racing or about to race
+  - **Queue Grid** - Upcoming pilot assignments by slot
+  - **Completed Heats** - Previously run heats with results
+
+### Admin Controls
+
+On the admin page (`/q/admin`) you can also:
+
+- **Generate Heat** - Manually create the next heat from the queue
+- **Replace Pilot** - Swap a pilot in the queue or in a generated heat
+- **Reset Queue** - Clear all queue entries and pilot stats, then sync existing heats from the class
 
 ## Requirements
 
