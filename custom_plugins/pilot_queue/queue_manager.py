@@ -7,8 +7,8 @@ import threading
 
 logger = logging.getLogger(__name__)
 
-DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
-STATE_FILE = os.path.join(DATA_DIR, 'queue_state.json')
+CONFIG_SECTION = 'pilot_queue'
+STATE_FILENAME = 'pilot_queue_state.json'
 
 DEFAULT_CONFIG = {
     'class_id': None,
@@ -23,20 +23,42 @@ DEFAULT_CONFIG = {
 class QueueManager:
     def __init__(self):
         self._lock = threading.Lock()
+        self._rhapi = None
         self.config = dict(DEFAULT_CONFIG)
         self.slots = [[] for _ in range(self.config['num_slots'])]
         self.pilot_stats = {}  # {str(pilot_id): {packs_flown, packs_queued, last_heat_num}}
         self.heat_counter = 0
         self.generated_heats = []
 
-    def load(self):
-        """Load state from JSON file."""
-        os.makedirs(DATA_DIR, exist_ok=True)
-        if os.path.exists(STATE_FILE):
+    def _state_file_path(self):
+        """Get the path to the state file in RotorHazard's data directory."""
+        if self._rhapi:
+            return os.path.join(self._rhapi.server.data_dir, STATE_FILENAME)
+        return None
+
+    def load(self, rhapi):
+        """Load config from RHAPI persistent config and state from data directory."""
+        self._rhapi = rhapi
+
+        # Load config from RHAPI persistent configuration
+        for key, default in DEFAULT_CONFIG.items():
+            val = rhapi.config.get(CONFIG_SECTION, key)
+            if val is not None:
+                if isinstance(default, bool):
+                    self.config[key] = val in (True, 1, '1', 'true', 'True')
+                elif isinstance(default, int):
+                    self.config[key] = int(val)
+                else:
+                    self.config[key] = val
+            else:
+                self.config[key] = default
+
+        # Load volatile queue state from data directory
+        state_file = self._state_file_path()
+        if state_file and os.path.exists(state_file):
             try:
-                with open(STATE_FILE, 'r') as f:
+                with open(state_file, 'r') as f:
                     data = json.load(f)
-                self.config = {**DEFAULT_CONFIG, **data.get('config', {})}
                 self.slots = data.get('slots', [[] for _ in range(self.config['num_slots'])])
                 self.pilot_stats = data.get('pilot_stats', {})
                 self.heat_counter = data.get('heat_counter', 0)
@@ -60,20 +82,26 @@ class QueueManager:
                 logger.error(f"[PilotQueue] Failed to load state: {e}")
 
     def save(self):
-        """Save state to JSON file."""
-        os.makedirs(DATA_DIR, exist_ok=True)
-        try:
-            data = {
-                'config': self.config,
-                'slots': self.slots,
-                'pilot_stats': self.pilot_stats,
-                'heat_counter': self.heat_counter,
-                'generated_heats': self.generated_heats
-            }
-            with open(STATE_FILE, 'w') as f:
-                json.dump(data, f, indent=2)
-        except Exception as e:
-            logger.error(f"[PilotQueue] Failed to save state: {e}")
+        """Save config to RHAPI persistent config and state to data directory."""
+        # Save config via RHAPI persistent configuration
+        if self._rhapi:
+            for key, val in self.config.items():
+                self._rhapi.config.set(CONFIG_SECTION, key, val)
+
+        # Save volatile queue state to data directory
+        state_file = self._state_file_path()
+        if state_file:
+            try:
+                data = {
+                    'slots': self.slots,
+                    'pilot_stats': self.pilot_stats,
+                    'heat_counter': self.heat_counter,
+                    'generated_heats': self.generated_heats
+                }
+                with open(state_file, 'w') as f:
+                    json.dump(data, f, indent=2)
+            except Exception as e:
+                logger.error(f"[PilotQueue] Failed to save state: {e}")
 
     def get_pilot_stat(self, pilot_id):
         """Get or create pilot stats entry."""
@@ -524,12 +552,69 @@ class QueueManager:
 
             self.save()
 
-    def reset(self):
-        """Clear all queues and stats."""
+    def reset(self, rhapi=None):
+        """Clear all queues and stats, then sync existing heats from the configured class."""
         with self._lock:
             self.slots = [[] for _ in range(self.config['num_slots'])]
             self.pilot_stats = {}
             self.heat_counter = 0
             self.generated_heats = []
+
+            # Rebuild from existing heats in the configured class
+            if rhapi and self.config.get('class_id'):
+                self._sync_existing_heats(rhapi)
+
             self.save()
             logger.info("[PilotQueue] Queue reset")
+
+    def _sync_existing_heats(self, rhapi):
+        """Scan existing heats in the configured class and rebuild generated_heats and pilot_stats."""
+        class_id = self.config.get('class_id')
+        if not class_id:
+            return
+
+        try:
+            all_heats = rhapi.db.heats
+            class_heats = [h for h in all_heats if h.class_id == class_id]
+            # Sort by heat id to preserve order
+            class_heats.sort(key=lambda h: h.id)
+
+            for heat in class_heats:
+                self.heat_counter += 1
+                rh_slots = rhapi.db.slots_by_heat(heat.id)
+
+                slot_pilots = {}
+                for i, slot in enumerate(rh_slots):
+                    if slot.pilot_id:
+                        slot_pilots[str(i)] = slot.pilot_id
+
+                # Check if this heat has been completed (has saved results)
+                completed = False
+                try:
+                    results = rhapi.db.heat_results(heat.id)
+                    if results:
+                        completed = True
+                except:
+                    pass
+
+                heat_entry = {
+                    'heat_id': heat.id,
+                    'heat_name': heat.name or f"Q Heat {self.heat_counter}",
+                    'heat_num': self.heat_counter,
+                    'slot_pilots': slot_pilots,
+                    'completed': completed
+                }
+                self.generated_heats.append(heat_entry)
+
+                # Update pilot stats
+                for pid in slot_pilots.values():
+                    stat = self.get_pilot_stat(pid)
+                    if completed:
+                        stat['packs_flown'] += 1
+                        stat['last_heat_num'] = self.heat_counter
+                    else:
+                        stat['packs_queued'] += 1
+
+            logger.info(f"[PilotQueue] Synced {len(class_heats)} existing heats from class {class_id}")
+        except Exception as e:
+            logger.error(f"[PilotQueue] Failed to sync existing heats: {e}")
